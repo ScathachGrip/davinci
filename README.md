@@ -80,7 +80,7 @@ Now, whenever you open an issue or pull request in a repository where the App is
 
 Since the image is automatically built and pushed to GitHub Container Registry (`ghcr.io/scathachgrip/davinci:latest`) by the CI workflow, you only need to run it on your VPS using Docker Compose.
 
-### Run on VPS using Docker Compose
+### 1. Run on VPS using Docker Compose
 
 Create a `docker-compose.yml` on your VPS:
 
@@ -105,8 +105,51 @@ services:
 
 Place your private key file `da-vinci-bot.2026-07-25.private-key.pem` next to the `docker-compose.yml` file, then run:
 
-```cmd
+### 2. Run the Containers
+
+Run the following commands in the same directory as your `docker-compose.yml`:
+
+```bash
+# Pull latest images
+docker compose pull
+
+# Optional: Sync and fresh memory init
+sync; echo 3 | sudo tee /proc/sys/vm/drop_caches;free -h
+
+# Start all services in background
 docker compose up -d
+```
+
+### 3. Logs all services
+
+Log after starting the services:
+
+```bash
+docker compose logs -f
+```
+
+### 4/?. Stop all services
+
+Stop all services and fresh memory init:
+
+```bash
+docker compose down
+```
+
+### 5/?. Purge all inactive containers
+
+Purge all inactive containers:
+
+```bash
+docker system prune -a --volumes
+```
+
+### 6/?. Fresh memory
+
+Optional for performance boost:
+
+```bash
+sync; echo 3 | sudo tee /proc/sys/vm/drop_caches;free -h
 ```
 
 The bot will start in detached mode, listening on port `6667`.

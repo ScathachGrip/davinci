@@ -54,9 +54,15 @@ func main() {
 
 	// Register route
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+
 		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("DaVinci GitHub Bot is active and running! Send webhook payloads via POST."))
+			w.Write([]byte(`{"status":"online","message":"DaVinci GitHub Bot is active and running! Send webhook payloads via POST."}`))
 			return
 		}
 		if r.Method == http.MethodPost {
