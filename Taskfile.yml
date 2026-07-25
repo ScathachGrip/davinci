@@ -1,0 +1,17 @@
+version: "3"
+
+tasks:
+  build:
+    desc: Build the native binary
+    cmds:
+      - go build -v -o da-vinci .
+
+  start:
+    desc: Run the bot locally
+    cmds:
+      - go run .
+
+  lint:
+    desc: Run golangci-lint with configurations
+    cmds:
+      - golangci-lint run

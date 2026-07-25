@@ -1,3 +1,4 @@
+// Package main provides the entry point, webhook handlers, and utility functions for the DaVinci GitHub Bot.
 package main
 
 import (
@@ -39,37 +40,14 @@ func NewWebhookServer(appID int64, webhookSecret string, privateKey []byte) (*We
 
 // ServeHTTP satisfies the http.Handler interface.
 func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	payload, err := github.ValidatePayload(r, []byte(s.webhookSecret))
+	_, event, err := s.parsePayload(r)
 	if err != nil {
-		log.Printf("[Webhook] Payload verification failed: %v", err)
-		http.Error(w, "invalid signature", http.StatusUnauthorized)
-		return
-	}
-
-	event, err := github.ParseWebHook(github.WebHookType(r), payload)
-	if err != nil {
-		log.Printf("[Webhook] Parsing payload failed: %v", err)
+		log.Printf("[Webhook] Payload verification/parsing failed: %v", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
-	// Extract Installation ID to authenticate as the target GitHub App Installation
-	var installationID int64
-	switch e := event.(type) {
-	case *github.IssuesEvent:
-		if e.Installation != nil {
-			installationID = e.Installation.GetID()
-		}
-	case *github.PullRequestEvent:
-		if e.Installation != nil {
-			installationID = e.Installation.GetID()
-		}
-	case *github.IssueCommentEvent:
-		if e.Installation != nil {
-			installationID = e.Installation.GetID()
-		}
-	}
-
+	installationID := s.getInstallationID(event)
 	if installationID == 0 {
 		log.Printf("[Webhook] Event has no installation context; skipping")
 		w.WriteHeader(http.StatusOK)
@@ -83,6 +61,45 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Timeout:   15 * time.Second,
 	})
 
+	s.routeEvent(client, event, r)
+
+	w.WriteHeader(http.StatusAccepted)
+	if _, err := w.Write([]byte("Event accepted for processing")); err != nil {
+		log.Printf("[Webhook] Error writing response: %v", err)
+	}
+}
+
+func (s *WebhookServer) parsePayload(r *http.Request) ([]byte, interface{}, error) {
+	payload, err := github.ValidatePayload(r, []byte(s.webhookSecret))
+	if err != nil {
+		return nil, nil, err
+	}
+	event, err := github.ParseWebHook(github.WebHookType(r), payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	return payload, event, nil
+}
+
+func (s *WebhookServer) getInstallationID(event interface{}) int64 {
+	switch e := event.(type) {
+	case *github.IssuesEvent:
+		if e.Installation != nil {
+			return e.Installation.GetID()
+		}
+	case *github.PullRequestEvent:
+		if e.Installation != nil {
+			return e.Installation.GetID()
+		}
+	case *github.IssueCommentEvent:
+		if e.Installation != nil {
+			return e.Installation.GetID()
+		}
+	}
+	return 0
+}
+
+func (s *WebhookServer) routeEvent(client *github.Client, event interface{}, r *http.Request) {
 	switch e := event.(type) {
 	case *github.IssuesEvent:
 		if e.GetAction() == "opened" {
@@ -103,9 +120,6 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		log.Printf("[Webhook] Unsupported event type: %s", github.WebHookType(r))
 	}
-
-	w.WriteHeader(http.StatusAccepted)
-	w.Write([]byte("Event accepted for processing"))
 }
 
 func (s *WebhookServer) handleIssueOpened(ctx context.Context, client *github.Client, e *github.IssuesEvent) {
@@ -120,7 +134,7 @@ func (s *WebhookServer) handleIssueOpened(ctx context.Context, client *github.Cl
 	categories := []string{"uwu", "uwu", "pout", "smug"}
 	cat := categories[s.rng.Intn(len(categories))]
 
-	imgURL, err := GetReactionURL(cat)
+	imgURL, err := GetReactionURL(ctx, cat)
 	if err != nil {
 		log.Printf("[Issues] Error fetching reaction: %v. Using fallback.", err)
 		imgURL = "https://i.waifu.pics/k5K7t5t.gif" // A cute static anime image/gif fallback
@@ -159,7 +173,7 @@ func (s *WebhookServer) handlePullRequestOpened(ctx context.Context, client *git
 	categories := []string{"pat", "happy", "pat", "nom"}
 	cat := categories[s.rng.Intn(len(categories))]
 
-	imgURL, err := GetReactionURL(cat)
+	imgURL, err := GetReactionURL(ctx, cat)
 	if err != nil {
 		log.Printf("[PR] Error fetching reaction: %v. Using fallback.", err)
 		imgURL = "https://i.waifu.pics/k5K7t5t.gif"
@@ -282,6 +296,32 @@ func determineMergeMethod(parentsCount int, commitMsg string, prNum int) string 
 	return "rebase"
 }
 
+// checkPermission verifies if a commenter has write or admin permission to the repository.
+func (s *WebhookServer) checkPermission(ctx context.Context, client *github.Client, owner, repo, commenter string) (bool, error) {
+	permLevel, _, err := client.Repositories.GetPermissionLevel(ctx, owner, repo, commenter)
+	if err != nil {
+		return false, err
+	}
+	perm := permLevel.GetPermission()
+	return perm == "admin" || perm == "write", nil
+}
+
+// formatCommitBody appends the Co-authored-by footer to the pull request description.
+func formatCommitBody(pr *github.PullRequest, commentUser *github.User) string {
+	name := commentUser.GetName()
+	if name == "" {
+		name = commentUser.GetLogin()
+	}
+	email := fmt.Sprintf("%d+%s@users.noreply.github.com", commentUser.GetID(), commentUser.GetLogin())
+	coAuthor := fmt.Sprintf("Co-authored-by: %s <%s>", name, email)
+
+	commitBody := pr.GetBody()
+	if commitBody != "" {
+		return commitBody + "\n\n" + coAuthor
+	}
+	return coAuthor
+}
+
 // handleCommentCreated processes comment creation events to detect "lgtm" and auto-merge the Pull Request.
 func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github.Client, e *github.IssueCommentEvent) {
 	// 1. Verify this comment is on a Pull Request (since PR comments are triggered via issue_comment)
@@ -303,14 +343,13 @@ func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github
 	log.Printf("[Webhook] LGTM comment detected on PR %s/%s #%d by %s", owner, repo, prNum, commenter)
 
 	// 3. Verify commenter permission level (must have write or admin access)
-	permLevel, _, err := client.Repositories.GetPermissionLevel(ctx, owner, repo, commenter)
+	hasPermission, err := s.checkPermission(ctx, client, owner, repo, commenter)
 	if err != nil {
 		log.Printf("[Webhook] Failed to get permission level for user %s: %v", commenter, err)
 		return
 	}
-	perm := permLevel.GetPermission()
-	if perm != "admin" && perm != "write" {
-		log.Printf("[Webhook] User %s has permission '%s' (not admin/write); ignoring LGTM", commenter, perm)
+	if !hasPermission {
+		log.Printf("[Webhook] User %s has insufficient permissions; ignoring LGTM", commenter)
 		s.postComment(ctx, client, owner, repo, prNum, fmt.Sprintf("Sorry @%s, only collaborators with write or admin access can merge this Pull Request.", commenter))
 		return
 	}
@@ -332,19 +371,7 @@ func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github
 	log.Printf("[Webhook] Auto-detected last merge method: %s", mergeMethod)
 
 	// 6. Build commit details with Co-authored-by footer
-	name := e.Comment.User.GetName()
-	if name == "" {
-		name = e.Comment.User.GetLogin()
-	}
-	email := fmt.Sprintf("%d+%s@users.noreply.github.com", e.Comment.User.GetID(), e.Comment.User.GetLogin())
-	coAuthor := fmt.Sprintf("Co-authored-by: %s <%s>", name, email)
-
-	commitBody := pr.GetBody()
-	if commitBody != "" {
-		commitBody = commitBody + "\n\n" + coAuthor
-	} else {
-		commitBody = coAuthor
-	}
+	commitBody := formatCommitBody(pr, e.Comment.User)
 
 	commitTitle := ""
 	if mergeMethod == "merge" {
@@ -364,6 +391,5 @@ func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github
 	}
 
 	log.Printf("[Webhook] Successfully merged PR #%d: %s", prNum, mergeResult.GetMessage())
-	s.postComment(ctx, client, owner, repo, prNum, fmt.Sprintf("Merged successfully by DaVinci Bot! (%s)", mergeResult.GetMessage()))
+	s.postComment(ctx, client, owner, repo, prNum, fmt.Sprintf("Merged successfully. (%s)", mergeResult.GetMessage()))
 }
-
