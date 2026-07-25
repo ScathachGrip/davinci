@@ -78,16 +78,9 @@ Now, whenever you open an issue or pull request in a repository where the App is
 
 ## 🐳 Docker Deployment (VPS)
 
-To build and deploy the bot on your VPS:
+Since the image is automatically built and pushed to GitHub Container Registry (`ghcr.io/scathachgrip/davinci:latest`) by the CI workflow, you only need to run it on your VPS using Docker Compose.
 
-### 1. Build and push your image (from your local machine)
-
-```cmd
-docker build -t scathachgrip/davinci:latest .
-docker push scathachgrip/davinci:latest
-```
-
-### 2. Run on VPS using Docker Compose
+### Run on VPS using Docker Compose
 
 Create a `docker-compose.yml` on your VPS:
 
@@ -96,15 +89,15 @@ version: "3.8"
 
 services:
   da-vinci-bot:
-    image: scathachgrip/davinci:latest
+    image: ghcr.io/scathachgrip/davinci:latest
     container_name: da-vinci-bot
     restart: unless-stopped
     ports:
       - "6667:6667"
     environment:
       - PORT=6667
-      - APP_ID=243623
-      - WEBHOOK_SECRET=development
+      - APP_ID=YOUR_APP_ID
+      - WEBHOOK_SECRET=YOUR_WEBHOOK_SECRET
     volumes:
       # Mount the folder containing your private key file (with any name, e.g. da-vinci-bot.2026-07-25.private-key.pem)
       # The bot will automatically search /keys for any file ending in .pem.
