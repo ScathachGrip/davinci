@@ -1,8 +1,11 @@
+// Package main provides the entry point, webhook handlers, and utility functions for the DaVinci GitHub Bot.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 )
@@ -21,7 +24,7 @@ type WaifuPicsResponse struct {
 
 // GetReactionURL returns a random anime reaction GIF URL for the given category.
 // It maps aliases if necessary and supports fallback logic across APIs.
-func GetReactionURL(category string) (string, error) {
+func GetReactionURL(ctx context.Context, category string) (string, error) {
 	mappedCategory := category
 	if category == "uwu" {
 		mappedCategory = "smile"
@@ -36,13 +39,13 @@ func GetReactionURL(category string) (string, error) {
 
 	if mappedCategory == "pout" {
 		// nekos.best supports pout, waifu.pics does not
-		url, err = fetchNekosBest(client, "pout")
+		url, err = fetchNekosBest(ctx, client, "pout")
 	} else {
 		// For categories like smug, pat, happy, nom, smile:
 		// We try waifu.pics first and fall back to nekos.best.
-		url, err = fetchWaifuPics(client, mappedCategory)
+		url, err = fetchWaifuPics(ctx, client, mappedCategory)
 		if err != nil {
-			url, err = fetchNekosBest(client, mappedCategory)
+			url, err = fetchNekosBest(ctx, client, mappedCategory)
 		}
 	}
 
@@ -53,8 +56,8 @@ func GetReactionURL(category string) (string, error) {
 	return url, nil
 }
 
-func fetchNekosBest(client *http.Client, category string) (string, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://nekos.best/api/v2/%s", category), nil)
+func fetchNekosBest(ctx context.Context, client *http.Client, category string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://nekos.best/api/v2/%s", category), http.NoBody)
 	if err != nil {
 		return "", err
 	}
@@ -65,7 +68,11 @@ func fetchNekosBest(client *http.Client, category string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if errClose := resp.Body.Close(); errClose != nil {
+			log.Printf("[HTTP] Error closing response body: %v", errClose)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("nekos.best returned status %d", resp.StatusCode)
@@ -83,8 +90,8 @@ func fetchNekosBest(client *http.Client, category string) (string, error) {
 	return apiResp.Results[0].URL, nil
 }
 
-func fetchWaifuPics(client *http.Client, category string) (string, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.waifu.pics/sfw/%s", category), nil)
+func fetchWaifuPics(ctx context.Context, client *http.Client, category string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("https://api.waifu.pics/sfw/%s", category), http.NoBody)
 	if err != nil {
 		return "", err
 	}
@@ -94,7 +101,11 @@ func fetchWaifuPics(client *http.Client, category string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if errClose := resp.Body.Close(); errClose != nil {
+			log.Printf("[HTTP] Error closing response body: %v", errClose)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("waifu.pics returned status %d", resp.StatusCode)

@@ -1,3 +1,4 @@
+// Package main provides the entry point, webhook handlers, and utility functions for the DaVinci GitHub Bot.
 package main
 
 import (
@@ -10,6 +11,9 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// AppVersion defines the current version of the application.
+var AppVersion = "1.0.1-alpha"
+
 func main() {
 	// Load .env file if it exists (for local development)
 	if err := godotenv.Load(); err != nil {
@@ -21,6 +25,45 @@ func main() {
 		port = "8080"
 	}
 
+	appID, webhookSecret, privateKeyBytes := loadConfig()
+
+	// Initialize WebhookServer
+	webhookServer, err := NewWebhookServer(appID, webhookSecret, privateKeyBytes)
+	if err != nil {
+		log.Fatalf("[Main] Failed to initialize webhook server: %v", err)
+	}
+
+	// Register route
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp := fmt.Sprintf(`{"status":"online","version":%q,"message":"DaVinci GitHub Bot is active and running! Send webhook payloads via POST."}`, AppVersion)
+			if _, err := w.Write([]byte(resp)); err != nil {
+				log.Printf("[Main] Error writing GET response: %v", err)
+			}
+			return
+		}
+		if r.Method == http.MethodPost {
+			webhookServer.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	})
+
+	log.Printf("[Main] Starting DaVinci Bot v%s...", AppVersion)
+	log.Printf("[Main] Listening on port %s...", port)
+	if err := http.ListenAndServe("0.0.0.0:"+port, nil); err != nil {
+		log.Fatalf("[Main] Server failed: %v", err)
+	}
+}
+
+func loadConfig() (int64, string, []byte) {
 	appIDStr := os.Getenv("APP_ID")
 	if appIDStr == "" {
 		appIDStr = os.Getenv("GITHUB_APP_ID")
@@ -46,36 +89,7 @@ func main() {
 		log.Fatalf("[Main] %v", err)
 	}
 
-	// Initialize WebhookServer
-	webhookServer, err := NewWebhookServer(appID, webhookSecret, privateKeyBytes)
-	if err != nil {
-		log.Fatalf("[Main] Failed to initialize webhook server: %v", err)
-	}
-
-	// Register route
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-
-		if r.Method == http.MethodGet {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"online","message":"DaVinci GitHub Bot is active and running! Send webhook payloads via POST."}`))
-			return
-		}
-		if r.Method == http.MethodPost {
-			webhookServer.ServeHTTP(w, r)
-			return
-		}
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	})
-
-	log.Printf("[Main] Listening on port %s...", port)
-	if err := http.ListenAndServe("0.0.0.0:"+port, nil); err != nil {
-		log.Fatalf("[Main] Server failed: %v", err)
-	}
+	return appID, webhookSecret, privateKeyBytes
 }
 
 // findPrivateKey searches for the GitHub App private key.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -30,7 +31,7 @@ func TestSignatureValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected signature to be valid, got error: %v", err)
 	}
-	if string(validated1) != string(payload) {
+	if !bytes.Equal(validated1, payload) {
 		t.Errorf("Expected payload %s, got %s", payload, validated1)
 	}
 
@@ -51,7 +52,7 @@ func TestGetReactionURL(t *testing.T) {
 
 	for _, cat := range categories {
 		t.Run(cat, func(t *testing.T) {
-			url, err := GetReactionURL(cat)
+			url, err := GetReactionURL(context.Background(), cat)
 			if err != nil {
 				// We log instead of failing to handle cases where external network / rate-limiting is active
 				t.Logf("Fetch reaction failed for category %s: %v (skipping fatal assertion)", cat, err)
