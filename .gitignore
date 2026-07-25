@@ -1,0 +1,5 @@
+legacy/
+.env
+*.pem
+/da-vinci
+/da-vinci.exe
