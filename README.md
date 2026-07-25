@@ -99,15 +99,14 @@ services:
       - APP_ID=YOUR_APP_ID
       - WEBHOOK_SECRET=YOUR_WEBHOOK_SECRET
     volumes:
-      # Mount the folder containing your private key file (with any name, e.g. da-vinci-bot.2026-07-25.private-key.pem)
-      # The bot will automatically search /keys for any file ending in .pem.
-      - .:/keys:ro
+      # Mount the private key file on your VPS into the container
+      - ./da-vinci-bot.2026-07-25.private-key.pem:/app/private-key.pem:ro
 ```
 
-Place your private key `.pem` file (regardless of its filename, e.g., `da-vinci-bot.2026-07-25.private-key.pem`) in the same directory as the `docker-compose.yml` file, then run:
+Place your private key file `da-vinci-bot.2026-07-25.private-key.pem` next to the `docker-compose.yml` file, then run:
 
 ```cmd
 docker compose up -d
 ```
 
-The bot will start in detached mode, listening on port `6667` and automatically scanning the mounted `/keys` directory to load your private key!
+The bot will start in detached mode, listening on port `6667`.
