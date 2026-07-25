@@ -78,18 +78,16 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Timeout:   15 * time.Second,
 	})
 
-	ctx := r.Context()
-
 	switch e := event.(type) {
 	case *github.IssuesEvent:
 		if e.GetAction() == "opened" {
-			go s.handleIssueOpened(ctx, client, e)
+			go s.handleIssueOpened(context.Background(), client, e)
 		}
 	case *github.PullRequestEvent:
 		if e.GetAction() == "opened" {
-			go s.handlePullRequestOpened(ctx, client, e)
+			go s.handlePullRequestOpened(context.Background(), client, e)
 		} else if e.GetAction() == "closed" {
-			go s.handlePullRequestClosed(ctx, client, e)
+			go s.handlePullRequestClosed(context.Background(), client, e)
 		}
 	default:
 		log.Printf("[Webhook] Unsupported event type: %s", github.WebHookType(r))
