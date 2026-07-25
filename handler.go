@@ -82,6 +82,8 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case *github.IssuesEvent:
 		if e.GetAction() == "opened" {
 			go s.handleIssueOpened(context.Background(), client, e)
+		} else if e.GetAction() == "closed" {
+			go s.handleIssueClosed(context.Background(), client, e)
 		}
 	case *github.PullRequestEvent:
 		if e.GetAction() == "opened" {
@@ -199,3 +201,18 @@ func (s *WebhookServer) handlePullRequestClosed(ctx context.Context, client *git
 		log.Printf("[PR] Error removing label 'pr:pending' (might not exist): %v", err)
 	}
 }
+
+func (s *WebhookServer) handleIssueClosed(ctx context.Context, client *github.Client, e *github.IssuesEvent) {
+	owner := e.Repo.Owner.GetLogin()
+	repo := e.Repo.GetName()
+	issueNum := e.Issue.GetNumber()
+
+	log.Printf("[Issues] Issue closed in %s/%s #%d", owner, repo, issueNum)
+
+	// Remove triage label
+	_, err := client.Issues.RemoveLabelForIssue(ctx, owner, repo, issueNum, "triage")
+	if err != nil {
+		log.Printf("[Issues] Error removing label 'triage' (might not exist): %v", err)
+	}
+}
+
