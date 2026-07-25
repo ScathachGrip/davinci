@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
@@ -63,6 +64,10 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if e.Installation != nil {
 			installationID = e.Installation.GetID()
 		}
+	case *github.IssueCommentEvent:
+		if e.Installation != nil {
+			installationID = e.Installation.GetID()
+		}
 	}
 
 	if installationID == 0 {
@@ -90,6 +95,10 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			go s.handlePullRequestOpened(context.Background(), client, e)
 		} else if e.GetAction() == "closed" {
 			go s.handlePullRequestClosed(context.Background(), client, e)
+		}
+	case *github.IssueCommentEvent:
+		if e.GetAction() == "created" {
+			go s.handleCommentCreated(context.Background(), client, e)
 		}
 	default:
 		log.Printf("[Webhook] Unsupported event type: %s", github.WebHookType(r))
@@ -130,12 +139,7 @@ func (s *WebhookServer) handleIssueOpened(ctx context.Context, client *github.Cl
 	)
 
 	// Create issue comment
-	_, _, err = client.Issues.CreateComment(ctx, owner, repo, issueNum, &github.IssueComment{
-		Body: github.String(commentBody),
-	})
-	if err != nil {
-		log.Printf("[Issues] Error creating comment: %v", err)
-	}
+	s.postComment(ctx, client, owner, repo, issueNum, commentBody)
 
 	// Add triage label
 	_, _, err = client.Issues.AddLabelsToIssue(ctx, owner, repo, issueNum, []string{"triage"})
@@ -174,12 +178,7 @@ func (s *WebhookServer) handlePullRequestOpened(ctx context.Context, client *git
 	)
 
 	// Create comment
-	_, _, err = client.Issues.CreateComment(ctx, owner, repo, prNum, &github.IssueComment{
-		Body: github.String(commentBody),
-	})
-	if err != nil {
-		log.Printf("[PR] Error creating comment: %v", err)
-	}
+	s.postComment(ctx, client, owner, repo, prNum, commentBody)
 
 	// Add pr:pending label
 	_, _, err = client.Issues.AddLabelsToIssue(ctx, owner, repo, prNum, []string{"pr:pending"})
@@ -214,5 +213,157 @@ func (s *WebhookServer) handleIssueClosed(ctx context.Context, client *github.Cl
 	if err != nil {
 		log.Printf("[Issues] Error removing label 'triage' (might not exist): %v", err)
 	}
+}
+
+// postComment is a helper to post a comment to an issue or pull request.
+func (s *WebhookServer) postComment(ctx context.Context, client *github.Client, owner, repo string, number int, body string) {
+	_, _, err := client.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{
+		Body: github.String(body),
+	})
+	if err != nil {
+		log.Printf("[Comment] Error creating comment in %s/%s #%d: %v", owner, repo, number, err)
+	}
+}
+
+// detectLastMergeMethod queries the repository history to see how the most recent PR was merged,
+// so the bot can reuse the same merge strategy (merge, squash, or rebase).
+func (s *WebhookServer) detectLastMergeMethod(ctx context.Context, client *github.Client, owner, repo string) string {
+	defaultMethod := "squash"
+
+	opts := &github.PullRequestListOptions{
+		State:       "closed",
+		Sort:        "updated",
+		Direction:   "desc",
+		ListOptions: github.ListOptions{PerPage: 10},
+	}
+	prs, _, err := client.PullRequests.List(ctx, owner, repo, opts)
+	if err != nil {
+		log.Printf("[Merge] Failed to list PRs, falling back to '%s': %v", defaultMethod, err)
+		return defaultMethod
+	}
+
+	var lastMergedPR *github.PullRequest
+	for _, pr := range prs {
+		if pr.MergedAt != nil && !pr.GetMergedAt().IsZero() {
+			lastMergedPR = pr
+			break
+		}
+	}
+
+	if lastMergedPR == nil {
+		log.Printf("[Merge] No merged PRs found in history, falling back to '%s'", defaultMethod)
+		return defaultMethod
+	}
+
+	commitSHA := lastMergedPR.GetMergeCommitSHA()
+	if commitSHA == "" {
+		log.Printf("[Merge] Merged PR #%d has empty MergeCommitSHA, falling back to '%s'", lastMergedPR.GetNumber(), defaultMethod)
+		return defaultMethod
+	}
+
+	commit, _, err := client.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
+	if err != nil {
+		log.Printf("[Merge] Failed to fetch commit %s, falling back to '%s': %v", commitSHA, defaultMethod, err)
+		return defaultMethod
+	}
+
+	return determineMergeMethod(len(commit.Parents), commit.GetCommit().GetMessage(), lastMergedPR.GetNumber())
+}
+
+// determineMergeMethod decides the merge strategy (merge, squash, or rebase) based on the parents count and commit message.
+func determineMergeMethod(parentsCount int, commitMsg string, prNum int) string {
+	if parentsCount == 2 {
+		return "merge"
+	}
+	squashPattern := fmt.Sprintf("(#%d)", prNum)
+	if strings.Contains(commitMsg, squashPattern) {
+		return "squash"
+	}
+	return "rebase"
+}
+
+// handleCommentCreated processes comment creation events to detect "lgtm" and auto-merge the Pull Request.
+func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github.Client, e *github.IssueCommentEvent) {
+	// 1. Verify this comment is on a Pull Request (since PR comments are triggered via issue_comment)
+	if e.Issue.PullRequestLinks == nil {
+		return
+	}
+
+	// 2. Check if the comment body is exactly "lgtm" (case-insensitive)
+	commentBody := strings.ToLower(strings.TrimSpace(e.Comment.GetBody()))
+	if commentBody != "lgtm" {
+		return
+	}
+
+	owner := e.Repo.Owner.GetLogin()
+	repo := e.Repo.GetName()
+	prNum := e.Issue.GetNumber()
+	commenter := e.Comment.User.GetLogin()
+
+	log.Printf("[Webhook] LGTM comment detected on PR %s/%s #%d by %s", owner, repo, prNum, commenter)
+
+	// 3. Verify commenter permission level (must have write or admin access)
+	permLevel, _, err := client.Repositories.GetPermissionLevel(ctx, owner, repo, commenter)
+	if err != nil {
+		log.Printf("[Webhook] Failed to get permission level for user %s: %v", commenter, err)
+		return
+	}
+	perm := permLevel.GetPermission()
+	if perm != "admin" && perm != "write" {
+		log.Printf("[Webhook] User %s has permission '%s' (not admin/write); ignoring LGTM", commenter, perm)
+		s.postComment(ctx, client, owner, repo, prNum, fmt.Sprintf("Sorry @%s, only collaborators with write or admin access can merge this Pull Request.", commenter))
+		return
+	}
+
+	// 4. Fetch PR details
+	pr, _, err := client.PullRequests.Get(ctx, owner, repo, prNum)
+	if err != nil {
+		log.Printf("[Webhook] Failed to fetch PR details for #%d: %v", prNum, err)
+		return
+	}
+
+	if pr.GetMerged() {
+		log.Printf("[Webhook] PR #%d is already merged; skipping", prNum)
+		return
+	}
+
+	// 5. Detect repository's active merge method from history
+	mergeMethod := s.detectLastMergeMethod(ctx, client, owner, repo)
+	log.Printf("[Webhook] Auto-detected last merge method: %s", mergeMethod)
+
+	// 6. Build commit details with Co-authored-by footer
+	name := e.Comment.User.GetName()
+	if name == "" {
+		name = e.Comment.User.GetLogin()
+	}
+	email := fmt.Sprintf("%d+%s@users.noreply.github.com", e.Comment.User.GetID(), e.Comment.User.GetLogin())
+	coAuthor := fmt.Sprintf("Co-authored-by: %s <%s>", name, email)
+
+	commitBody := pr.GetBody()
+	if commitBody != "" {
+		commitBody = commitBody + "\n\n" + coAuthor
+	} else {
+		commitBody = coAuthor
+	}
+
+	commitTitle := ""
+	if mergeMethod == "merge" {
+		commitTitle = pr.GetTitle()
+	}
+
+	// 7. Perform Merge
+	mergeResult, _, err := client.PullRequests.Merge(ctx, owner, repo, prNum, commitBody, &github.PullRequestOptions{
+		CommitTitle: commitTitle,
+		MergeMethod: mergeMethod,
+		SHA:         pr.GetHead().GetSHA(),
+	})
+	if err != nil {
+		log.Printf("[Webhook] Merge failed for PR #%d: %v", prNum, err)
+		s.postComment(ctx, client, owner, repo, prNum, fmt.Sprintf("Failed to merge this Pull Request: %v", err))
+		return
+	}
+
+	log.Printf("[Webhook] Successfully merged PR #%d: %s", prNum, mergeResult.GetMessage())
+	s.postComment(ctx, client, owner, repo, prNum, fmt.Sprintf("Merged successfully by DaVinci Bot! (%s)", mergeResult.GetMessage()))
 }
 
