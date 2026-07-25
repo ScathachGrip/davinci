@@ -64,3 +64,45 @@ func TestGetReactionURL(t *testing.T) {
 		})
 	}
 }
+
+// TestDetermineMergeMethod verifies the decision logic for auto-detecting the merge strategy
+func TestDetermineMergeMethod(t *testing.T) {
+	tests := []struct {
+		name         string
+		parentsCount int
+		commitMsg    string
+		prNum        int
+		expected     string
+	}{
+		{
+			name:         "Standard Merge Commit (2 parents)",
+			parentsCount: 2,
+			commitMsg:    "Merge pull request #12 from branch",
+			prNum:        12,
+			expected:     "merge",
+		},
+		{
+			name:         "Squash Merge Commit (1 parent, contains (#pr))",
+			parentsCount: 1,
+			commitMsg:    "feat: add exciting feature (#12)",
+			prNum:        12,
+			expected:     "squash",
+		},
+		{
+			name:         "Rebase Merge Commit (1 parent, original message)",
+			parentsCount: 1,
+			commitMsg:    "feat: add exciting feature",
+			prNum:        12,
+			expected:     "rebase",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := determineMergeMethod(tt.parentsCount, tt.commitMsg, tt.prNum)
+			if result != tt.expected {
+				t.Errorf("Expected merge method %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
