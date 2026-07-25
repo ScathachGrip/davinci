@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
@@ -20,6 +21,8 @@ type WebhookServer struct {
 	webhookSecret string
 	appsTransport *ghinstallation.AppsTransport
 	rng           *rand.Rand
+	activeReposMu sync.RWMutex
+	activeRepos   int
 }
 
 // NewWebhookServer initializes a WebhookServer using the App ID, Webhook Secret, and Private Key PEM bytes.
@@ -392,4 +395,42 @@ func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github
 
 	log.Printf("[Webhook] Successfully merged PR #%d: %s", prNum, mergeResult.GetMessage())
 	s.postComment(ctx, client, owner, repo, prNum, fmt.Sprintf("Merged successfully. (%s)", mergeResult.GetMessage()))
+}
+
+// GetAppMetadata returns the dynamic name, avatar URL, and HTML URL of the GitHub App.
+func (s *WebhookServer) GetAppMetadata(ctx context.Context) (string, string, string) {
+	defaultAvatar := fmt.Sprintf("https://avatars.githubusercontent.com/in/%d?v=4", s.appID)
+	defaultHTMLURL := "https://github.com/apps/da-vinci-bot"
+	defaultName := "davinci"
+
+	client := github.NewClient(&http.Client{Transport: s.appsTransport})
+	app, _, err := client.Apps.Get(ctx, "")
+	if err != nil || app == nil {
+		return defaultName, defaultAvatar, defaultHTMLURL
+	}
+
+	name := defaultName
+	if app.Name != nil {
+		name = *app.Name
+	}
+	htmlURL := defaultHTMLURL
+	if app.HTMLURL != nil {
+		htmlURL = *app.HTMLURL
+	}
+
+	return name, defaultAvatar, htmlURL
+}
+
+// GetActiveRepos returns the cached count of active repositories.
+func (s *WebhookServer) GetActiveRepos() int {
+	s.activeReposMu.RLock()
+	defer s.activeReposMu.RUnlock()
+	return s.activeRepos
+}
+
+// SetActiveRepos updates the cached count of active repositories.
+func (s *WebhookServer) SetActiveRepos(count int) {
+	s.activeReposMu.Lock()
+	defer s.activeReposMu.Unlock()
+	s.activeRepos = count
 }

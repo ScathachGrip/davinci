@@ -1,6 +1,6 @@
 ## Dockerized
 
-Since the image is automatically built and pushed to GitHub Container Registry (`ghcr.io/scathachgrip/davinci:latest`) by the CI workflow, you only need to run it on your VPS using Docker Compose.
+`ghcr.io/scathachgrip/davinci:latest`
 
 ### 1. Run on VPS using Docker Compose
 

@@ -2,17 +2,21 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
+	"github.com/bradleyfalzon/ghinstallation/v2"
+	"github.com/google/go-github/v62/github"
 	"github.com/joho/godotenv"
 )
 
 // AppVersion defines the current version of the application.
-var AppVersion = "1.0.2-alpha"
+var AppVersion = "1.1.1-alpha"
 
 func main() {
 	// Load .env file if it exists (for local development)
@@ -33,6 +37,19 @@ func main() {
 		log.Fatalf("[Main] Failed to initialize webhook server: %v", err)
 	}
 
+	// Log the active repositories being watched in the background at startup
+	go logActiveRepositories(webhookServer)
+
+	// Run periodic scanning every 1 hour
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			log.Println("[Main] Starting periodic active repository scan...")
+			logActiveRepositories(webhookServer)
+		}
+	}()
+
 	// Register route
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -41,10 +58,12 @@ func main() {
 		}
 
 		if r.Method == http.MethodGet {
-			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
-			resp := fmt.Sprintf(`{"status":"online","version":%q,"message":"DaVinci GitHub Bot is active and running! Send webhook payloads via POST."}`, AppVersion)
-			if _, err := w.Write([]byte(resp)); err != nil {
+			name, avatar, htmlURL := webhookServer.GetAppMetadata(r.Context())
+			activeRepos := webhookServer.GetActiveRepos()
+			html := GetDashboardHTML(AppVersion, name, avatar, htmlURL, activeRepos)
+			if _, err := w.Write([]byte(html)); err != nil {
 				log.Printf("[Main] Error writing GET response: %v", err)
 			}
 			return
@@ -127,4 +146,59 @@ func findPrivateKey() ([]byte, error) {
 	}
 
 	return nil, fmt.Errorf("no private key found (place a .pem file in this directory or mount to /keys)")
+}
+
+// logActiveRepositories lists all repositories accessible to all installations of the GitHub App
+// and prints the total count to the log.
+func logActiveRepositories(server *WebhookServer) {
+	ctx := context.Background()
+	appClient := github.NewClient(&http.Client{Transport: server.appsTransport})
+
+	opt := &github.ListOptions{PerPage: 100}
+	var totalRepos int
+	for {
+		installations, resp, err := appClient.Apps.ListInstallations(ctx, opt)
+		if err != nil {
+			log.Printf("[Main] Error listing installations: %v", err)
+			return
+		}
+
+		for _, inst := range installations {
+			count, err := countInstallationRepos(ctx, server, inst.GetID())
+			if err != nil {
+				log.Printf("[Main] Error counting repositories for installation %d: %v", inst.GetID(), err)
+				continue
+			}
+			totalRepos += count
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+
+	log.Printf("[Main] Watching %d repository active", totalRepos)
+	server.SetActiveRepos(totalRepos)
+}
+
+// countInstallationRepos retrieves the count of active repositories for a specific installation.
+func countInstallationRepos(ctx context.Context, server *WebhookServer, instID int64) (int, error) {
+	itr := ghinstallation.NewFromAppsTransport(server.appsTransport, instID)
+	instClient := github.NewClient(&http.Client{Transport: itr})
+
+	var count int
+	opt := &github.ListOptions{PerPage: 100}
+	for {
+		repos, resp, err := instClient.Apps.ListRepos(ctx, opt)
+		if err != nil {
+			return 0, err
+		}
+		count += len(repos.Repositories)
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+	return count, nil
 }
