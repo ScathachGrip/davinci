@@ -1,5 +1,16 @@
+<<<<<<< HEAD
 legacy/
 .env
 *.pem
 /da-vinci
 /da-vinci.exe
+=======
+node_modules
+npm-debug.log
+*.pem
+!mock-cert.pem
+.env
+coverage
+package-lock.json
+yarn.lock
+>>>>>>> 9f240d1b89fdde5484ec6d556c94816530f0aa79
