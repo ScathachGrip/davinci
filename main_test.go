@@ -150,6 +150,11 @@ func TestDetermineMergeMethod(t *testing.T) {
 func TestFormatCommitBody(t *testing.T) {
 	pr := &github.PullRequest{
 		Body: github.String("This is a cool PR description."),
+		User: &github.User{
+			ID:    github.Int64(8387081),
+			Login: github.String("sinkaroid"),
+			Name:  github.String("sinkaroid"),
+		},
 	}
 	botUser := &github.User{
 		ID:    github.Int64(120938290),
@@ -157,7 +162,7 @@ func TestFormatCommitBody(t *testing.T) {
 		Name:  github.String("davinci"),
 	}
 
-	expected := "This is a cool PR description.\n\nCo-authored-by: davinci <120938290+da-vinci-bot[bot]@users.noreply.github.com>"
+	expected := "This is a cool PR description.\n\nCo-authored-by: sinkaroid <8387081+sinkaroid@users.noreply.github.com>\nCo-authored-by: davinci <120938290+da-vinci-bot[bot]@users.noreply.github.com>"
 	result := formatCommitBody(pr, botUser)
 	if result != expected {
 		t.Errorf("Expected commit body:\n%q\n\nGot:\n%q", expected, result)
