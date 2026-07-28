@@ -324,21 +324,58 @@ func (s *WebhookServer) checkPermission(ctx context.Context, client *github.Clie
 	return perm == "admin" || perm == "write", nil
 }
 
-// formatCommitBody appends the Co-authored-by footer to the pull request description.
+// formatCommitBody appends the Co-authored-by footer for the PR author and bot to the pull request description.
 func formatCommitBody(pr *github.PullRequest, botUser *github.User) string {
-	login := botUser.GetLogin()
-	name := botUser.GetName()
-	if name == "" {
-		name = strings.TrimSuffix(login, "[bot]")
+	var coAuthors []string
+
+	if line := formatUserCoAuthor(pr.GetUser()); line != "" {
+		coAuthors = append(coAuthors, line)
 	}
-	email := fmt.Sprintf("%d+%s@users.noreply.github.com", botUser.GetID(), login)
-	coAuthor := fmt.Sprintf("Co-authored-by: %s <%s>", name, email)
+	if line := formatBotCoAuthor(pr.GetUser(), botUser); line != "" {
+		coAuthors = append(coAuthors, line)
+	}
 
 	commitBody := strings.TrimSpace(pr.GetBody())
-	if commitBody != "" {
-		return commitBody + "\n\n" + coAuthor
+	if len(coAuthors) > 0 {
+		footer := strings.Join(coAuthors, "\n")
+		if commitBody != "" {
+			return commitBody + "\n\n" + footer
+		}
+		return footer
 	}
-	return coAuthor
+	return commitBody
+}
+
+func formatUserCoAuthor(prUser *github.User) string {
+	if prUser == nil || prUser.GetLogin() == "" {
+		return ""
+	}
+	prLogin := prUser.GetLogin()
+	email := prUser.GetEmail()
+	if email == "" {
+		email = fmt.Sprintf("%d+%s@users.noreply.github.com", prUser.GetID(), prLogin)
+	}
+	name := prUser.GetName()
+	if name == "" {
+		name = prLogin
+	}
+	return fmt.Sprintf("Co-authored-by: %s <%s>", name, email)
+}
+
+func formatBotCoAuthor(prUser, botUser *github.User) string {
+	if botUser == nil || botUser.GetLogin() == "" {
+		return ""
+	}
+	botLogin := botUser.GetLogin()
+	if prUser != nil && prUser.GetLogin() == botLogin {
+		return ""
+	}
+	botName := botUser.GetName()
+	if botName == "" {
+		botName = strings.TrimSuffix(botLogin, "[bot]")
+	}
+	botEmail := fmt.Sprintf("%d+%s@users.noreply.github.com", botUser.GetID(), botLogin)
+	return fmt.Sprintf("Co-authored-by: %s <%s>", botName, botEmail)
 }
 
 // handleCommentCreated processes comment creation events to detect "lgtm" and auto-merge the Pull Request.
@@ -393,10 +430,15 @@ func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github
 	commitBody := formatCommitBody(pr, s.getBotUser(ctx, client))
 
 	// 7. Perform Merge
-	mergeResult, _, err := client.PullRequests.Merge(ctx, owner, repo, prNum, commitBody, &github.PullRequestOptions{
+	opts := &github.PullRequestOptions{
 		MergeMethod: mergeMethod,
 		SHA:         pr.GetHead().GetSHA(),
-	})
+	}
+	if mergeMethod == "merge" {
+		opts.CommitTitle = pr.GetTitle()
+	}
+
+	mergeResult, _, err := client.PullRequests.Merge(ctx, owner, repo, prNum, commitBody, opts)
 	if err != nil {
 		log.Printf("[Webhook] Merge failed for PR #%d: %v", prNum, err)
 		s.postComment(ctx, client, owner, repo, prNum, fmt.Sprintf("Failed to merge this Pull Request: %v", err))
