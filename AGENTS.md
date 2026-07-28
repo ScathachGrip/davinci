@@ -7,13 +7,12 @@ This file outlines critical implementation requirements and constraints for the 
 ## 1. Pull Request Merge Strategy & Title Formatting
 
 > [!IMPORTANT]
-> **Never manually override `CommitTitle` in `github.PullRequestOptions`** when performing a pull request merge.
+> **Use a tagged `switch mergeMethod` to format `CommitTitle` in `github.PullRequestOptions`** when performing a pull request merge.
 
-- **Leave `CommitTitle` empty (`""`)**: In the `google/go-github` library, `CommitTitle` is annotated with `omitempty`. Leaving it blank ensures it is omitted from the API request payload.
-- **Why?**
-  - If `CommitTitle` is explicitly set (e.g., to `pr.GetTitle()`), it overrides GitHub's native title generator. This strips out the PR number link (e.g. `(#12)`), preventing GitHub from hyperlinking the commit back to the PR.
-  - Omitting `CommitTitle` lets GitHub natively format the title (e.g., `PR Title (#PR_NUMBER)` for squash merges, and `Merge pull request #PR_NUMBER from...` for standard merges) based on the repository's configuration.
-- **Do not "fake" it**: Do not manually format or append the PR number to a custom title string. Allow GitHub to handle this natively.
+- **`merge` method**: Set `opts.CommitTitle = pr.GetTitle()` to use the clean PR title and avoid GitHub's default `Merge pull request #...` prefix.
+- **`squash` method**: Set `opts.CommitTitle = fmt.Sprintf("%s (#%d)", pr.GetTitle(), prNum)` to include the PR number link.
+- **`rebase` method**: Leave `opts.CommitTitle` empty (`""`) to preserve individual commit titles.
+- **Implementation**: Always use a tagged `switch mergeMethod` block to satisfy Go linter rules.
 
 ---
 

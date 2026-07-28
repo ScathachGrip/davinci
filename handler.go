@@ -431,9 +431,14 @@ func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github
 
 	// 7. Perform Merge
 	opts := &github.PullRequestOptions{
-		CommitTitle: pr.GetTitle(),
 		MergeMethod: mergeMethod,
 		SHA:         pr.GetHead().GetSHA(),
+	}
+	switch mergeMethod {
+	case "squash":
+		opts.CommitTitle = fmt.Sprintf("%s (#%d)", pr.GetTitle(), prNum)
+	case "merge":
+		opts.CommitTitle = pr.GetTitle()
 	}
 	mergeResult, _, err := client.PullRequests.Merge(ctx, owner, repo, prNum, commitBody, opts)
 	if err != nil {
