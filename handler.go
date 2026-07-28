@@ -15,7 +15,7 @@ import (
 	"github.com/google/go-github/v62/github"
 )
 
-// WebhookServer handles incoming GitHub webhook requests.
+// WebhookServer handles incoming GH webhook requests.
 type WebhookServer struct {
 	appID         int64
 	webhookSecret string

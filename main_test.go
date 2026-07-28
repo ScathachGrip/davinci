@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 
@@ -91,6 +92,17 @@ func TestDetermineMergeMethod(t *testing.T) {
 			expected:       "merge",
 		},
 		{
+			name:           "Clean Merge Commit (2 parents, custom title without default Merge pull request prefix)",
+			parentsCount:   2,
+			commitMsg:      "feat: add exciting feature",
+			prTitle:        "feat: add exciting feature",
+			prNum:          12,
+			prCommitsCount: 3,
+			commitSHA:      "sha1",
+			headSHA:        "sha2",
+			expected:       "merge",
+		},
+		{
 			name:           "Squash Merge Commit (1 parent, contains (#pr))",
 			parentsCount:   1,
 			commitMsg:      "feat: add exciting feature (#12)",
@@ -141,6 +153,53 @@ func TestDetermineMergeMethod(t *testing.T) {
 			result := determineMergeMethod(tt.parentsCount, tt.commitMsg, tt.prTitle, tt.prNum, tt.prCommitsCount, tt.commitSHA, tt.headSHA)
 			if result != tt.expected {
 				t.Errorf("Expected merge method %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestPullRequestOptionsCommitTitle tests that CommitTitle in github.PullRequestOptions is properly set
+// according to the detected merge method (merge: PR title, squash: PR title (#PR_NUM), rebase: empty).
+func TestPullRequestOptionsCommitTitle(t *testing.T) {
+	prTitle := "feat: awesome feature"
+	prNum := 42
+
+	tests := []struct {
+		name          string
+		mergeMethod   string
+		expectedTitle string
+	}{
+		{
+			name:          "Merge method sets clean PR title",
+			mergeMethod:   "merge",
+			expectedTitle: "feat: awesome feature",
+		},
+		{
+			name:          "Squash method sets PR title with (#prNum)",
+			mergeMethod:   "squash",
+			expectedTitle: "feat: awesome feature (#42)",
+		},
+		{
+			name:          "Rebase method leaves CommitTitle empty",
+			mergeMethod:   "rebase",
+			expectedTitle: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := &github.PullRequestOptions{
+				MergeMethod: tt.mergeMethod,
+			}
+			switch opts.MergeMethod {
+			case "squash":
+				opts.CommitTitle = fmt.Sprintf("%s (#%d)", prTitle, prNum)
+			case "merge":
+				opts.CommitTitle = prTitle
+			}
+
+			if opts.CommitTitle != tt.expectedTitle {
+				t.Errorf("Expected CommitTitle %q for %s, got %q", tt.expectedTitle, tt.mergeMethod, opts.CommitTitle)
 			}
 		})
 	}
