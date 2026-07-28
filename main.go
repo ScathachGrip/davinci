@@ -16,7 +16,7 @@ import (
 )
 
 // AppVersion defines the current version of the application.
-var AppVersion = "1.1.7-alpha"
+var AppVersion = "1.1.8-alpha"
 
 func main() {
 	// Load .env file if it exists (for local development)
