@@ -69,38 +69,76 @@ func TestGetReactionURL(t *testing.T) {
 // TestDetermineMergeMethod verifies the decision logic for auto-detecting the merge strategy
 func TestDetermineMergeMethod(t *testing.T) {
 	tests := []struct {
-		name         string
-		parentsCount int
-		commitMsg    string
-		prNum        int
-		expected     string
+		name           string
+		parentsCount   int
+		commitMsg      string
+		prTitle        string
+		prNum          int
+		prCommitsCount int
+		commitSHA      string
+		headSHA        string
+		expected       string
 	}{
 		{
-			name:         "Standard Merge Commit (2 parents)",
-			parentsCount: 2,
-			commitMsg:    "Merge pull request #12 from branch",
-			prNum:        12,
-			expected:     "merge",
+			name:           "Standard Merge Commit (2 parents)",
+			parentsCount:   2,
+			commitMsg:      "Merge pull request #12 from branch",
+			prTitle:        "feat: add exciting feature",
+			prNum:          12,
+			prCommitsCount: 3,
+			commitSHA:      "sha1",
+			headSHA:        "sha2",
+			expected:       "merge",
 		},
 		{
-			name:         "Squash Merge Commit (1 parent, contains (#pr))",
-			parentsCount: 1,
-			commitMsg:    "feat: add exciting feature (#12)",
-			prNum:        12,
-			expected:     "squash",
+			name:           "Squash Merge Commit (1 parent, contains (#pr))",
+			parentsCount:   1,
+			commitMsg:      "feat: add exciting feature (#12)",
+			prTitle:        "feat: add exciting feature",
+			prNum:          12,
+			prCommitsCount: 3,
+			commitSHA:      "sha1",
+			headSHA:        "sha2",
+			expected:       "squash",
 		},
 		{
-			name:         "Rebase Merge Commit (1 parent, original message)",
-			parentsCount: 1,
-			commitMsg:    "feat: add exciting feature",
-			prNum:        12,
-			expected:     "rebase",
+			name:           "Squash Merge Commit (matches PR Title in commit msg)",
+			parentsCount:   1,
+			commitMsg:      "chore(release): 4.0.5-alpha\n\n* commit 1\n* commit 2",
+			prTitle:        "chore(release): 4.0.5-alpha",
+			prNum:          12,
+			prCommitsCount: 3,
+			commitSHA:      "sha1",
+			headSHA:        "sha2",
+			expected:       "squash",
+		},
+		{
+			name:           "Squash Merge Commit (multi-commit PR squashed into 1 commit, commitSHA != headSHA)",
+			parentsCount:   1,
+			commitMsg:      "feat: custom commit title without pr num",
+			prTitle:        "some title",
+			prNum:          12,
+			prCommitsCount: 3,
+			commitSHA:      "sha_squashed_commit",
+			headSHA:        "sha_pr_head",
+			expected:       "squash",
+		},
+		{
+			name:           "Rebase Merge Commit (1 parent, commitSHA == headSHA)",
+			parentsCount:   1,
+			commitMsg:      "feat: add exciting feature",
+			prTitle:        "another title",
+			prNum:          12,
+			prCommitsCount: 1,
+			commitSHA:      "sha1",
+			headSHA:        "sha1",
+			expected:       "rebase",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := determineMergeMethod(tt.parentsCount, tt.commitMsg, tt.prNum)
+			result := determineMergeMethod(tt.parentsCount, tt.commitMsg, tt.prTitle, tt.prNum, tt.prCommitsCount, tt.commitSHA, tt.headSHA)
 			if result != tt.expected {
 				t.Errorf("Expected merge method %q, got %q", tt.expected, result)
 			}

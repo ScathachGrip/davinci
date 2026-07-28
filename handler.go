@@ -280,22 +280,35 @@ func (s *WebhookServer) detectLastMergeMethod(ctx context.Context, client *githu
 		return defaultMethod
 	}
 
+	prTitle := lastMergedPR.GetTitle()
+	prCommitsCount := lastMergedPR.GetCommits()
+	headSHA := lastMergedPR.GetHead().GetSHA()
+
 	commit, _, err := client.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
 	if err != nil {
 		log.Printf("[Merge] Failed to fetch commit %s, falling back to '%s': %v", commitSHA, defaultMethod, err)
 		return defaultMethod
 	}
 
-	return determineMergeMethod(len(commit.Parents), commit.GetCommit().GetMessage(), lastMergedPR.GetNumber())
+	return determineMergeMethod(len(commit.Parents), commit.GetCommit().GetMessage(), prTitle, lastMergedPR.GetNumber(), prCommitsCount, commitSHA, headSHA)
 }
 
-// determineMergeMethod decides the merge strategy (merge, squash, or rebase) based on the parents count and commit message.
-func determineMergeMethod(parentsCount int, commitMsg string, prNum int) string {
+// determineMergeMethod decides the merge strategy (merge, squash, or rebase) based on repo history:
+// parent count, commit message, PR title, PR commit count, and commit SHA comparison.
+func determineMergeMethod(parentsCount int, commitMsg, prTitle string, prNum, prCommitsCount int, commitSHA, headSHA string) string {
 	if parentsCount == 2 {
 		return "merge"
 	}
 	squashPattern := fmt.Sprintf("(#%d)", prNum)
 	if strings.Contains(commitMsg, squashPattern) {
+		return "squash"
+	}
+	if prTitle != "" && strings.Contains(commitMsg, prTitle) {
+		return "squash"
+	}
+	// If a PR (single or multi-commit with prCommitsCount >= 1) was squashed by GitHub,
+	// GitHub creates a new single commit on target branch (commitSHA != headSHA).
+	if prCommitsCount >= 1 && commitSHA != "" && headSHA != "" && commitSHA != headSHA {
 		return "squash"
 	}
 	return "rebase"
@@ -398,28 +411,29 @@ func (s *WebhookServer) getBotUser(ctx context.Context, client *github.Client) *
 		return s.botUser
 	}
 
-	apiClient := client
-	if apiClient == nil {
-		apiClient = github.NewClient(&http.Client{Transport: s.appsTransport})
-	}
+	// Always use AppsTransport (App JWT) to fetch App info via GET /app
+	appClient := github.NewClient(&http.Client{Transport: s.appsTransport})
+	app, _, err := appClient.Apps.Get(ctx, "")
 
-	app, _, err := apiClient.Apps.Get(ctx, "")
+	var slug string
+	var appName string
 	if err != nil || app == nil {
 		log.Printf("[Webhook] Failed to fetch app info for bot identity: %v", err)
-		slug := "da-vinci-bot"
-		s.botUser = &github.User{
-			ID:    github.Int64(s.appID),
-			Login: github.String(slug + "[bot]"),
-			Name:  github.String("davinci"),
-		}
-		return s.botUser
-	}
-
-	slug := app.GetSlug()
-	if slug == "" {
 		slug = "da-vinci-bot"
+		appName = "davinci"
+	} else {
+		slug = app.GetSlug()
+		if slug == "" {
+			slug = "da-vinci-bot"
+		}
+		appName = app.GetName()
 	}
 	botLogin := slug + "[bot]"
+
+	apiClient := client
+	if apiClient == nil {
+		apiClient = appClient
+	}
 
 	// Fetch the actual User object of the bot to get its correct database User ID
 	botUser, _, err := apiClient.Users.Get(ctx, botLogin)
@@ -428,7 +442,7 @@ func (s *WebhookServer) getBotUser(ctx context.Context, client *github.Client) *
 		s.botUser = &github.User{
 			ID:    github.Int64(s.appID),
 			Login: github.String(botLogin),
-			Name:  github.String(app.GetName()),
+			Name:  github.String(appName),
 		}
 		return s.botUser
 	}
