@@ -431,13 +431,10 @@ func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github
 
 	// 7. Perform Merge
 	opts := &github.PullRequestOptions{
+		CommitTitle: pr.GetTitle(),
 		MergeMethod: mergeMethod,
 		SHA:         pr.GetHead().GetSHA(),
 	}
-	if mergeMethod == "merge" {
-		opts.CommitTitle = pr.GetTitle()
-	}
-
 	mergeResult, _, err := client.PullRequests.Merge(ctx, owner, repo, prNum, commitBody, opts)
 	if err != nil {
 		log.Printf("[Webhook] Merge failed for PR #%d: %v", prNum, err)
