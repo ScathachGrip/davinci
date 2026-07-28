@@ -327,8 +327,12 @@ func (s *WebhookServer) checkPermission(ctx context.Context, client *github.Clie
 // formatCommitBody appends the Co-authored-by footer to the pull request description.
 func formatCommitBody(pr *github.PullRequest, botUser *github.User) string {
 	login := botUser.GetLogin()
+	name := botUser.GetName()
+	if name == "" {
+		name = strings.TrimSuffix(login, "[bot]")
+	}
 	email := fmt.Sprintf("%d+%s@users.noreply.github.com", botUser.GetID(), login)
-	coAuthor := fmt.Sprintf("Co-authored-by: %s <%s>", login, email)
+	coAuthor := fmt.Sprintf("Co-authored-by: %s <%s>", name, email)
 
 	commitBody := strings.TrimSpace(pr.GetBody())
 	if commitBody != "" {

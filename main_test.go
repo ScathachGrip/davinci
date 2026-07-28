@@ -157,7 +157,7 @@ func TestFormatCommitBody(t *testing.T) {
 		Name:  github.String("davinci"),
 	}
 
-	expected := "This is a cool PR description.\n\nCo-authored-by: da-vinci-bot[bot] <120938290+da-vinci-bot[bot]@users.noreply.github.com>"
+	expected := "This is a cool PR description.\n\nCo-authored-by: davinci <120938290+da-vinci-bot[bot]@users.noreply.github.com>"
 	result := formatCommitBody(pr, botUser)
 	if result != expected {
 		t.Errorf("Expected commit body:\n%q\n\nGot:\n%q", expected, result)
