@@ -23,6 +23,8 @@ type WebhookServer struct {
 	rng           *rand.Rand
 	activeReposMu sync.RWMutex
 	activeRepos   int
+	botUserMu     sync.Mutex
+	botUser       *github.User
 }
 
 // NewWebhookServer initializes a WebhookServer using the App ID, Webhook Secret, and Private Key PEM bytes.
@@ -310,12 +312,13 @@ func (s *WebhookServer) checkPermission(ctx context.Context, client *github.Clie
 }
 
 // formatCommitBody appends the Co-authored-by footer to the pull request description.
-func formatCommitBody(pr *github.PullRequest, commentUser *github.User) string {
-	name := commentUser.GetName()
+func formatCommitBody(pr *github.PullRequest, botUser *github.User) string {
+	login := botUser.GetLogin()
+	name := botUser.GetName()
 	if name == "" {
-		name = commentUser.GetLogin()
+		name = login
 	}
-	email := fmt.Sprintf("%d+%s@users.noreply.github.com", commentUser.GetID(), commentUser.GetLogin())
+	email := fmt.Sprintf("%d+%s@users.noreply.github.com", botUser.GetID(), login)
 	coAuthor := fmt.Sprintf("Co-authored-by: %s <%s>", name, email)
 
 	commitBody := pr.GetBody()
@@ -374,12 +377,9 @@ func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github
 	log.Printf("[Webhook] Auto-detected last merge method: %s", mergeMethod)
 
 	// 6. Build commit details with Co-authored-by footer
-	commitBody := formatCommitBody(pr, e.Comment.User)
+	commitBody := formatCommitBody(pr, s.getBotUser(ctx))
 
-	commitTitle := ""
-	if mergeMethod == "merge" {
-		commitTitle = pr.GetTitle()
-	}
+	commitTitle := pr.GetTitle()
 
 	// 7. Perform Merge
 	mergeResult, _, err := client.PullRequests.Merge(ctx, owner, repo, prNum, commitBody, &github.PullRequestOptions{
@@ -395,6 +395,39 @@ func (s *WebhookServer) handleCommentCreated(ctx context.Context, client *github
 
 	log.Printf("[Webhook] Successfully merged PR #%d: %s", prNum, mergeResult.GetMessage())
 	s.postComment(ctx, client, owner, repo, prNum, fmt.Sprintf("Merged successfully. (%s)", mergeResult.GetMessage()))
+}
+
+// getBotUser returns the GitHub App's bot user identity, fetching and caching it on first call.
+func (s *WebhookServer) getBotUser(ctx context.Context) *github.User {
+	s.botUserMu.Lock()
+	defer s.botUserMu.Unlock()
+	if s.botUser != nil {
+		return s.botUser
+	}
+
+	client := github.NewClient(&http.Client{Transport: s.appsTransport})
+	app, _, err := client.Apps.Get(ctx, "")
+	if err != nil || app == nil {
+		log.Printf("[Webhook] Failed to fetch app info for bot identity: %v", err)
+		slug := "da-vinci-bot"
+		s.botUser = &github.User{
+			ID:    github.Int64(s.appID),
+			Login: github.String(slug + "[bot]"),
+			Name:  github.String("davinci"),
+		}
+		return s.botUser
+	}
+
+	slug := app.GetSlug()
+	if slug == "" {
+		slug = "da-vinci-bot"
+	}
+	s.botUser = &github.User{
+		ID:    github.Int64(s.appID),
+		Login: github.String(slug + "[bot]"),
+		Name:  github.String(app.GetName()),
+	}
+	return s.botUser
 }
 
 // GetAppMetadata returns the dynamic name, avatar URL, and HTML URL of the GitHub App.
