@@ -107,3 +107,21 @@ func TestDetermineMergeMethod(t *testing.T) {
 		})
 	}
 }
+
+// TestFormatCommitBody verifies that the Co-authored-by email and display name are generated correctly
+func TestFormatCommitBody(t *testing.T) {
+	pr := &github.PullRequest{
+		Body: github.String("This is a cool PR description."),
+	}
+	botUser := &github.User{
+		ID:    github.Int64(120938290),
+		Login: github.String("da-vinci-bot[bot]"),
+		Name:  github.String("davinci"),
+	}
+
+	expected := "This is a cool PR description.\n\nCo-authored-by: da-vinci-bot[bot] <120938290+da-vinci-bot[bot]@users.noreply.github.com>"
+	result := formatCommitBody(pr, botUser)
+	if result != expected {
+		t.Errorf("Expected commit body:\n%q\n\nGot:\n%q", expected, result)
+	}
+}
